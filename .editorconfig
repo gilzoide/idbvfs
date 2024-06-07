@@ -9,3 +9,11 @@ trim_trailing_whitespace = true
 [*.{c,cpp,h,hpp}]
 indent_style = tab
 indent_size = 4
+
+[Makefile]
+indent_style = tab
+indent_size = 8
+
+[*.json]
+indent_style = space
+indent_size = 2
