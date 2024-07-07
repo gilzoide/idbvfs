@@ -1,78 +1,223 @@
-#include <cstdarg>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
-#include <emscripten.h>
-
-#include <sqlite3.h>
 #include <SQLiteVfs.hpp>
 
-#define IDBVFS_NAME "idbvfs"
+#include "idbvfs.h"
 
-// SQLite file format offsets
+/// Used size for Indexed DB "disk sectors"
 #define DISK_SECTOR_SIZE 512
-
-// Helper macros for byte/math operations
-#define LOAD_8(p) \
-	(((uint8_t *) p)[0])
-#define LOAD_16_BE(p) \
-	(((uint8_t *) p)[0] << 8) + (((uint8_t *) p)[1])
-#define LOAD_32_BE(p) \
-	(((uint8_t *) p)[0] << 24) + (((uint8_t *) p)[1] << 16) + (((uint8_t *) p)[2] << 8) + (((uint8_t *) p)[1])
+/// Return the minimum value between `a` and `b`
 #define MIN(a, b) \
 	((a) < (b) ? (a) : (b))
-#define MAX(a, b) \
-	((a) > (b) ? (a) : (b))
+
+
+#ifdef TRACE
+static void TRACE_LOG(const char *fmt, ...) {
+	va_list args;
+	va_start(args, fmt);
+	static char _idbvfs_trace_log_buffer[1024];
+	vsnprintf(_idbvfs_trace_log_buffer, sizeof(_idbvfs_trace_log_buffer), fmt, args);
+#ifdef __EMSCRIPTEN__
+	EM_ASM({ console.log(UTF8ToString($0)) }, _idbvfs_trace_log_buffer);
+#else
+	printf("%s\n", _idbvfs_trace_log_buffer);
+#endif
+	va_end(args);
+}
+#else
+	#define TRACE_LOG(...)
+#endif
+
+
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#else
+// Polyfill used solely for automated testing.
+// Do not use this VFS without emscripten on any other circumstance.
+#include <sys/stat.h>
+static char _idbvfs_file_name_buffer[1024];
+void emscripten_idb_exists(const char *db_name, const char *file_id, int* pexists, int *perror) {
+	snprintf(_idbvfs_file_name_buffer, sizeof(_idbvfs_file_name_buffer), "%s/%s", db_name, file_id);
+	*pexists = stat(_idbvfs_file_name_buffer, NULL) == 0;
+}
+
+void emscripten_idb_load(const char *db_name, const char *file_id, void** pbuffer, int* pnum, int *perror) {
+	snprintf(_idbvfs_file_name_buffer, sizeof(_idbvfs_file_name_buffer), "%s/%s", db_name, file_id);
+	FILE *f = fopen(_idbvfs_file_name_buffer, "rb");
+	if (!f) {
+		*perror = 1;
+		return;
+	}
+
+	fseek(f, 0, SEEK_END);
+	size_t file_size = ftell(f);
+	*pbuffer = malloc(file_size);
+	if (*pbuffer) {
+		fseek(f, 0, SEEK_SET);
+		*pnum = fread(*pbuffer, 1, file_size, f);
+	}
+	else {
+		*perror = 1;
+	}
+	fclose(f);
+}
+
+void emscripten_idb_store(const char *db_name, const char *file_id, void* buffer, int num, int *perror) {
+	mkdir(db_name, 0777);
+
+	snprintf(_idbvfs_file_name_buffer, sizeof(_idbvfs_file_name_buffer), "%s/%s", db_name, file_id);
+	FILE *f = fopen(_idbvfs_file_name_buffer, "wb");
+	if (!f) {
+		*perror = 1;
+		return;
+	}
+
+	size_t bytes_written = fwrite(buffer, 1, num, f);
+	if (bytes_written < num) {
+		*perror = 1;
+	}
+	fclose(f);
+}
+
+void emscripten_idb_delete(const char *db_name, const char *file_id, int *perror) {
+	snprintf(_idbvfs_file_name_buffer, sizeof(_idbvfs_file_name_buffer), "%s/%s", db_name, file_id);
+	*perror = remove(_idbvfs_file_name_buffer) != 0;
+}
+#endif
 
 using namespace sqlitevfs;
 using namespace std;
 
-// class SqliteString {
-// public:
-// 	SqliteString(const char *fmt, ...) {
-// 		va_list args;
-// 		va_start(args, fmt);
-// 		str = sqlite3_vmprintf(fmt, args);
-// 		va_end(args);
-// 	}
-// 	~SqliteString() {
-// 		sqlite3_free(str);
-// 	}
+class IdbDiskSector {
+public:
+	IdbDiskSector(const char *dbname, int sector_index)
+		: dbname(dbname)
+	{
+		snprintf(filename, sizeof(filename), "%d", sector_index);
+	}
 
-// 	const char *cstr() const {
-// 		return str;
-// 	}
-// 	operator const char*() const {
-// 		return cstr();
-// 	}
+	~IdbDiskSector() {
+		dispose();
+	}
 
-// private:
-// 	char *str;
-// };
+	bool exists() const {
+		int exists = 0;
+		int error = 0;
+		emscripten_idb_exists(dbname, filename, &exists, &error);
+		return !error && exists;
+	}
 
-struct AutoFreePtr {
-	uint8_t *ptr;
+	int load() {
+		dispose();
+		int size = 0;
+		int error = 0;
+		emscripten_idb_load(dbname, filename, (void **) &buffer, &size, &error);
+		return error ? 0 : size;
+	}
 
-	~AutoFreePtr() {
-		if (ptr) {
-			free(ptr);
+	int load_into(uint8_t *data, int data_size, sqlite3_int64 offset_in_sector) {
+		int sector_size = load();
+		if (sector_size <= 0) {
+			return 0;
+		}
+		int copied_bytes = MIN(data_size, sector_size - offset_in_sector);
+		if (copied_bytes > 0) {
+			memcpy(data, buffer + offset_in_sector, copied_bytes);
+			return copied_bytes;
+		}
+		else {
+			return 0;
 		}
 	}
 
-	operator void **() {
-		return (void **) &ptr;
+	int store(const void *data, int data_size, sqlite3_int64 offset_in_sector) {
+		// offsetted write: read, patch existing data, then write
+		if (offset_in_sector > 0) {
+			int sector_size = load();
+			if (sector_size <= 0) {
+				return 0;
+			}
+			int written_sector_size = MIN(offset_in_sector + data_size, DISK_SECTOR_SIZE);
+			if (sector_size < written_sector_size) {
+				if (void *new_buffer = realloc(buffer, written_sector_size)) {
+					sector_size = written_sector_size;
+					buffer = (uint8_t *) new_buffer;
+				}
+				else {
+					return 0;
+				}
+			}
+			int written_bytes = MIN(sector_size - offset_in_sector, data_size);
+			memcpy(buffer + offset_in_sector, data, written_bytes);
+			int error = 0;
+			emscripten_idb_store(dbname, filename, buffer, sector_size, &error);
+			return error ? 0 : written_bytes;
+		}
+		// write full sector: just write a full disk sector
+		else if (data_size >= DISK_SECTOR_SIZE) {
+			int error = 0;
+			emscripten_idb_store(dbname, filename, (void *) data, DISK_SECTOR_SIZE, &error);
+			return error ? 0 : DISK_SECTOR_SIZE;
+		}
+		// patch sector beginning: read, patch existing data if any, then write
+		else {
+			int sector_size = load();
+			if (sector_size > data_size) {
+				memcpy(buffer, data, data_size);
+				int error = 0;
+				emscripten_idb_store(dbname, filename, buffer, sector_size, &error);
+				return error ? 0 : data_size;
+			}
+			else {
+				int error = 0;
+				emscripten_idb_store(dbname, filename, (void *) data, data_size, &error);
+				return error ? 0 : data_size;
+			}
+		}
 	}
+
+	bool truncate(sqlite3_int64 new_size) {
+		int sector_size = load();
+		if (sector_size > new_size) {
+			int error = 0;
+			emscripten_idb_store(dbname, filename, buffer, new_size, &error);
+			return !error;
+		}
+		else {
+			return false;
+		}
+	}
+
+	bool remove() {
+		int exists = 0;
+		int error = 0;
+		emscripten_idb_exists(dbname, filename, &exists, &error);
+		if (exists) {
+			emscripten_idb_delete(dbname, filename, &error);
+			return !error;
+		}
+		else {
+			return false;
+		}
+	}
+
+	void dispose() {
+		if (buffer) {
+			free(buffer);
+			buffer = nullptr;
+		}
+	}
+
+private:
+	const char *dbname;
+	char filename[16];
+	uint8_t *buffer = nullptr;
 };
 
-#define LOG(js_str, ...) \
-	EM_ASM({ console.log(js_str) }, ##__VA_ARGS__)
-
-struct WasmFile : public SQLiteFileImpl {
+struct IdbFile : public SQLiteFileImpl {
 	sqlite3_filename dbname;
-	char page_name_buffer[16];
-
-	WasmFile() {}
-	WasmFile(sqlite3_filename dbname) : dbname(dbname) {}
 
 	int iVersion() const override {
 		return 1;
@@ -83,87 +228,70 @@ struct WasmFile : public SQLiteFileImpl {
 	}
 
 	int xRead(void *p, int iAmt, sqlite3_int64 iOfst) override {
-		LOG('READ ' + $0 + ' @ ' + $1, iAmt, (int) iOfst);
+		TRACE_LOG("READ %s %d @ %ld", dbname, iAmt, iOfst);
 
 		uint8_t *buffer = (uint8_t *) p;
 		int sector_index = iOfst / DISK_SECTOR_SIZE;
 		int offset_in_sector = iOfst % DISK_SECTOR_SIZE;
 
 		while (iAmt > 0) {
-			AutoFreePtr idb_buffer;
-			int size = 0;
-			int error;
-			emscripten_idb_load(dbname, sector_name(sector_index), idb_buffer, &size, &error);
-			if (error) {
+			IdbDiskSector sector(dbname, sector_index);
+			int loaded_bytes = sector.load_into(buffer, iAmt, offset_in_sector);
+			if (loaded_bytes <= 0) {
 				return SQLITE_IOERR_SHORT_READ;
 			}
-			int copied_bytes = MIN(iAmt, size - offset_in_sector);
-			memcpy(buffer, idb_buffer.ptr + offset_in_sector, copied_bytes);
-			buffer += copied_bytes;
+			buffer += loaded_bytes;
+			iAmt -= loaded_bytes;
 			offset_in_sector = 0;
 			sector_index++;
 		}
-		return iAmt > 0 ? SQLITE_IOERR_SHORT_READ : SQLITE_OK;
+		return SQLITE_OK;
 	}
 
 	int xWrite(const void *p, int iAmt, sqlite3_int64 iOfst) override {
-		LOG('WRITE ' + $0 + ' @ ' + $1, iAmt, (int) iOfst);
+		TRACE_LOG("WRITE %s %d @ %ld", dbname, iAmt, iOfst);
 
 		const uint8_t *buffer = (const uint8_t *) p;
 		int sector_index = iOfst / DISK_SECTOR_SIZE;
 		int offset_in_sector = iOfst % DISK_SECTOR_SIZE;
 
-		// handle writing in the middle of a sector:
-		// read current data and rewrite what's beyond the offset
-		if (offset_in_sector > 0) {
-			LOG('OH NO ' + $0, 21);
-			return SQLITE_IOERR_WRITE;
-		}
-
 		while (iAmt > 0) {
-			int error;
-			int size = MIN(iAmt, DISK_SECTOR_SIZE);
-			emscripten_idb_store(dbname, sector_name(sector_index), (void *) buffer, size, &error);
-			if (error) {
-				LOG('ERROU =/ ' + $0, 52);
+			IdbDiskSector sector(dbname, sector_index);
+			int written_bytes = sector.store(buffer, iAmt, offset_in_sector);
+			if (written_bytes <= 0) {
 				return SQLITE_IOERR_WRITE;
 			}
-			iAmt -= size;
-			buffer += size;
+			buffer += written_bytes;
+			iAmt -= written_bytes;
+			offset_in_sector = 0;
 			sector_index++;
 		}
 		return SQLITE_OK;
 	}
 
 	int xTruncate(sqlite3_int64 size) override {
+		TRACE_LOG("TRUNCATE %s to %ld", size);
 		int sector_index = size / DISK_SECTOR_SIZE;
 		int offset_in_sector = size % DISK_SECTOR_SIZE;
 
 		// handle truncating in the middle of a sector:
 		// read current data and rewrite only until the offset
 		if (offset_in_sector > 0) {
-			AutoFreePtr idb_buffer;
-			int size = 0;
-			int error = 0;
-			const char *sector_str = sector_name(sector_index);
-			emscripten_idb_load(dbname, sector_str, idb_buffer, &size, &error);
-			if (!error) {
-				emscripten_idb_store(dbname, sector_str, idb_buffer.ptr, offset_in_sector, &error);
-			}
+			IdbDiskSector sector(dbname, sector_index);
+			sector.truncate(offset_in_sector);
 			sector_index++;
 		}
 
 		// now remove all the other sectors
 		while (true) {
-			int error = 0;
-			emscripten_idb_delete(dbname, sector_name(sector_index), &error);
-			if (error) {
+			IdbDiskSector sector(dbname, sector_index);
+			if (!sector.remove()) {
 				break;
 			}
 			sector_index++;
 		}
 
-		return SQLITE_ERROR;
+		return SQLITE_OK;
 	}
 
 	int xSync(int flags) override {
@@ -172,12 +300,10 @@ struct WasmFile : public SQLiteFileImpl {
 
 	int xFileSize(sqlite3_int64 *pSize) override {
 		sqlite3_int64 total_size = 0;
-		for (int i = 0; ; i++) {
-			AutoFreePtr idb_buffer;
-			int size = 0;
-			int error = 0;
-			emscripten_idb_load(dbname, sector_name(i), idb_buffer, &size, &error);
-			if (error) {
+		for (int sector_index = 0; ; sector_index++) {
+			IdbDiskSector sector(dbname, sector_index);
+			int size = sector.load();
+			if (size <= 0) {
 				break;
 			}
 			total_size += size;
@@ -214,44 +340,52 @@ struct WasmFile : public SQLiteFileImpl {
 	int xDeviceCharacteristics() override {
 		return 0;
 	}
-
-private:
-	const char *sector_name(int index) {
-		snprintf(page_name_buffer, sizeof(page_name_buffer), "%d", index);
-		return page_name_buffer;
-	}
 };
 
-// 3. Implement your own `SQLiteVfsImpl<>` subclass.
-// Pass your SQLiteFileImpl subclass as template parameter.
-// Override any methods necessary. Reference: https://www.sqlite.org/c3ref/vfs.html
-// Default implementation will forward execution to the `original_vfs` passed in `SQLiteVfs` construtor.
-// Notice that `xOpen` receives a `SQLiteFile<LogIOFileImpl> *` instead of `sqlite3_file`.
-struct IdbVfs : public SQLiteVfsImpl<WasmFile> {
-	int xOpen(sqlite3_filename zName, SQLiteFile<WasmFile> *file, int flags, int *pOutFlags) override {
+struct IdbVfs : public SQLiteVfsImpl<IdbFile> {
+	int xOpen(sqlite3_filename zName, SQLiteFile<IdbFile> *file, int flags, int *pOutFlags) override {
+		TRACE_LOG("OPEN %s", zName);
 		int res = SQLITE_OK;
 		if (!(flags & SQLITE_OPEN_READWRITE)) {
-			int exists;
-			int error;
-			emscripten_idb_exists(zName, "0", &exists, &error);
-			if (!exists) {
+			IdbDiskSector first_sector(zName, 0);
+			if (!first_sector.exists()) {
 				res = SQLITE_NOTFOUND;
 			}
-			if (error) {
-				res = SQLITE_ERROR;
-			}
 		}
-		file->setup(res, zName);
+		file->implementation.dbname = zName;
 		return res;
 	}
 
 	int xDelete(const char *zName, int syncDir) override {
-
+		TRACE_LOG("DELETE %s", zName);
+		for (int sector_index = 0; ; sector_index++) {
+			IdbDiskSector sector(zName, sector_index);
+			if (!sector.remove()) {
+				break;
+			}
+		}
 		return SQLITE_OK;
+	}
+
+	int xAccess(const char *zName, int flags, int *pResOut) override {
+		TRACE_LOG("ACCESS %s %d", zName, flags);
+		switch (flags) {
+			case SQLITE_ACCESS_EXISTS:
+			case SQLITE_ACCESS_READWRITE:
+			case SQLITE_ACCESS_READ:
+				IdbDiskSector first_sector(zName, 0);
+				*pResOut = first_sector.exists();
+				return SQLITE_OK;
+		}
+		return SQLITE_NOTFOUND;
 	}
 };
 
-extern "C" int idbvfs_register(int makeDefault) {
-	static SQLiteVfs<IdbVfs> idbvfs(IDBVFS_NAME);
-	return idbvfs.register_vfs(makeDefault);
+extern "C" {
+	const char *IDBVFS_NAME = "idbvfs";
+
+	int idbvfs_register(int makeDefault) {
+		static SQLiteVfs<IdbVfs> idbvfs(IDBVFS_NAME);
+		return idbvfs.register_vfs(makeDefault);
+	}
 }

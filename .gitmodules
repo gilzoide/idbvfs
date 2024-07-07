@@ -1,3 +1,6 @@
 [submodule "libs/sqlite-vfs-cpp"]
 	path = libs/sqlite-vfs-cpp
 	url = https://github.com/gilzoide/sqlite-vfs-cpp.git
+[submodule "libs/catch2"]
+	path = libs/catch2
+	url = https://github.com/catchorg/Catch2.git
