@@ -1,3 +1,8 @@
+/** @file idbvfs.h
+ *
+ * SQLite VFS that stores data in web browser's Indexed DB using Emscripten.
+ * Must link using `-sASYNCIFY`.
+ */
 #ifdef __cplusplus
 extern "C" {
 #endif
