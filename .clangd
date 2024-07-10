@@ -1,5 +1,0 @@
-CompileFlags:
-  Add:
-    - -std=c++11
-    - -Ilibs/sqlite-amalgamation
-    - -Ilibs/sqlite-vfs-cpp
