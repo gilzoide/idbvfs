@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>idbvfs demo</title>
+  </head>
+  <body>
+    <div>
+      <textarea id="sqlinput" placeholder="SELECT * FROM table;" rows="5" cols="80"></textarea>
+      <br/>
+      <button onclick="runSQL()">Run SQL</button>
+      <br/>
+      <span id="sqloutput"></span>
+    </div>
+
+    <script src="demo.js"></script>
+    <script>
+      var sqlinput = document.getElementById("sqlinput")
+      var sqloutput = document.getElementById("sqloutput")
+      function onSQLColumnName(column_index, column_name) {
+        if (column_index == 0) {
+          sqloutput.innerText += column_name
+        }
+        else {
+          sqloutput.innerText += " | " + column_name
+        }
+      }
+      function onSQLColumnNameFinished() {
+        sqloutput.innerText += "\n" + "-".repeat(sqloutput.innerText.length)
+      }
+      function onSQLColumnValue(column_index, column_value) {
+        if (column_index == 0) {
+          sqloutput.innerText += "\n" + column_value
+        }
+        else {
+          sqloutput.innerText += " | " + column_value
+        }
+      }
+      function onSQLError(error) {
+        sqloutput.innerText = "ERROR: " + error
+      }
+      function runSQL() {
+        sqloutput.innerText = ""
+        Module.ccall('run_sql', null, ['string'], [sqlinput.value], { async: true }).then(() => {
+          if (!sqloutput.innerText) {
+            sqloutput.innerText = "OK!"
+          }
+        })
+      }
+    </script>
+  </body>
+</html>
