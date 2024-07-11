@@ -11,6 +11,7 @@ project(idbvfs LANGUAGES C CXX)
 # Options
 include(CMakeDependentOption)
 cmake_dependent_option(IDBVFS_BUILD_TESTS "Builds unit tests" ON "NOT EMSCRIPTEN;NOT IS_SUBPROJECT" OFF)
+cmake_dependent_option(IDBVFS_BUILD_DEMO "Builds demo WASM file" OFF "EMSCRIPTEN" OFF)
 option(IDBVFS_TRACE "Logs trace messages on I/O operations" OFF)
 
 # idbvfs library
@@ -27,4 +28,9 @@ if(IDBVFS_BUILD_TESTS)
   add_executable(tests tests/test.cpp libs/sqlite-amalgamation/sqlite3.c)
   target_include_directories(tests PRIVATE libs/sqlite-amalgamation)
   target_link_libraries(tests PRIVATE idbvfs Catch2::Catch2WithMain)
+endif()
+
+# demo app
+if(EMSCRIPTEN AND IDBVFS_BUILD_DEMO)
+  add_subdirectory(demo)
 endif()
