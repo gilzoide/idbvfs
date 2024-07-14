@@ -14,6 +14,7 @@
 
     <script src="demo.js"></script>
     <script>
+      var isRunningSql = false
       var sqlinput = document.getElementById("sqlinput")
       var sqloutput = document.getElementById("sqloutput")
       function onSQLColumnName(column_index, column_name) {
@@ -39,11 +40,20 @@
         sqloutput.innerText = "ERROR: " + error
       }
       function runSQL() {
+        if (isRunningSql) {
+          return
+        }
+
+        isRunningSql = true
         sqloutput.innerText = ""
+        var timeBefore = Date.now()
         Module.ccall('run_sql', null, ['string'], [sqlinput.value], { async: true }).then(() => {
+          var timeDiff = Date.now() - timeBefore
           if (!sqloutput.innerText) {
             sqloutput.innerText = "OK!"
           }
+          sqloutput.innerHTML += "<br/><br/>Took: " + timeDiff + "ms"
+          isRunningSql = false
         })
       }
     </script>
