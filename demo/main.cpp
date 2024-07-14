@@ -2,8 +2,8 @@
 
 #include <emscripten.h>
 
-#include "../idbvfs.h"
-#include "../libs/sqlite-amalgamation/sqlite3.h"
+#include <idbvfs.h>
+#include <sqlite3.h>
 
 sqlite3 *db;
 

@@ -36,7 +36,7 @@ static void TRACE_LOG(const char *fmt, ...) {
 #else
 // Polyfill used solely for automated testing.
 // Do not use this VFS without emscripten on any other circumstance.
-#include "tests/emscripten_polyfill.hpp"
+#include "../tests/emscripten_polyfill.hpp"
 #endif
 
 using namespace sqlitevfs;

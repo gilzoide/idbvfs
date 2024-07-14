@@ -15,22 +15,17 @@ cmake_dependent_option(IDBVFS_BUILD_DEMO "Builds demo WASM file" OFF "EMSCRIPTEN
 option(IDBVFS_TRACE "Logs trace messages on I/O operations" OFF)
 
 # idbvfs library
-add_library(idbvfs idbvfs.cpp)
-target_compile_features(idbvfs PUBLIC cxx_std_11)
-target_include_directories(idbvfs PRIVATE libs/sqlite-amalgamation libs/sqlite-vfs-cpp)
-if(IDBVFS_TRACE)
-  target_compile_definitions(idbvfs PRIVATE TRACE)
-endif()
+add_subdirectory(src)
 
 # unit tests
 if(IDBVFS_BUILD_TESTS)
+  add_subdirectory(libs/sqlite-amalgamation)
   add_subdirectory(libs/catch2)
-  add_executable(tests tests/test.cpp libs/sqlite-amalgamation/sqlite3.c)
-  target_include_directories(tests PRIVATE libs/sqlite-amalgamation)
-  target_link_libraries(tests PRIVATE idbvfs Catch2::Catch2WithMain)
+  add_subdirectory(tests)
 endif()
 
 # demo app
 if(EMSCRIPTEN AND IDBVFS_BUILD_DEMO)
+  add_subdirectory(libs/sqlite-amalgamation)
   add_subdirectory(demo)
 endif()

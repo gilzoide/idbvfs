@@ -1,5 +1,6 @@
-#include "../idbvfs.h"
+#include <idbvfs.h>
 #include <sqlite3.h>
+
 #include <catch2/catch_test_macros.hpp>
 
 TEST_CASE("SQLite using idbvfs can read and write database", "[idbvfs]") {
