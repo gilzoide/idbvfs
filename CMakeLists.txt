@@ -26,7 +26,6 @@ endif()
 if(IDBVFS_BUILD_TESTS)
   add_subdirectory(libs/catch2)
   add_executable(tests tests/test.cpp libs/sqlite-amalgamation/sqlite3.c)
-  target_include_directories(tests PRIVATE libs/sqlite-amalgamation)
   target_link_libraries(tests PRIVATE idbvfs Catch2::Catch2WithMain)
 endif()
 
