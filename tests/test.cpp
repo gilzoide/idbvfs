@@ -1,5 +1,5 @@
-#include "../idbvfs.h"
-#include "../libs/sqlite-amalgamation/sqlite3.h"
+#include <idbvfs.h>
+#include <sqlite3.h>
 
 #include <catch2/catch_test_macros.hpp>
 
