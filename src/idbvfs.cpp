@@ -13,6 +13,15 @@
 	((a) < (b) ? (a) : (b))
 
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#else
+// Polyfill used solely for automated testing.
+// Do not use this VFS without emscripten on any other circumstance.
+#include "../tests/emscripten_polyfill.hpp"
+#endif
+
+
 #ifdef TRACE
 static void TRACE_LOG(const char *fmt, ...) {
 	va_list args;
@@ -28,15 +37,6 @@ static void TRACE_LOG(const char *fmt, ...) {
 }
 #else
 	#define TRACE_LOG(...)
-#endif
-
-
-#ifdef __EMSCRIPTEN__
-#include <emscripten.h>
-#else
-// Polyfill used solely for automated testing.
-// Do not use this VFS without emscripten on any other circumstance.
-#include "../tests/emscripten_polyfill.hpp"
 #endif
 
 using namespace sqlitevfs;
