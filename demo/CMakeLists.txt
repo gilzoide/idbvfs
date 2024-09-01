@@ -5,4 +5,7 @@ target_link_options(demo
     -sEXPORTED_FUNCTIONS=_run_sql
     -sEXPORTED_RUNTIME_METHODS=ccall,cwrap
 )
+if (CMAKE_BUILD_TYPE STREQUAL Debug)
+  target_link_options(demo PUBLIC -sASYNCIFY_STACK_SIZE=24576)
+endif()
 configure_file(index.html index.html COPYONLY)
