@@ -176,7 +176,11 @@ private:
 
 struct IdbFileSize {
 	IdbFileSize() {}
-	IdbFileSize(sqlite3_filename dbname) : dbname(dbname) {}
+	IdbFileSize(sqlite3_filename dbname, bool autoload = true) : dbname(dbname) {
+		if (autoload) {
+			load();
+		}
+	}
 
 	bool exists() const {
 		int exists = 0;
@@ -360,7 +364,7 @@ struct IdbVfs : public SQLiteVfsImpl<IdbFile> {
 			case SQLITE_ACCESS_EXISTS:
 			case SQLITE_ACCESS_READWRITE:
 			case SQLITE_ACCESS_READ:
-				IdbFileSize file_size(zName);
+				IdbFileSize file_size(zName, false);
 				*pResOut = file_size.exists();
 				return SQLITE_OK;
 		}
