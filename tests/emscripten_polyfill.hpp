@@ -7,6 +7,7 @@ static char _idbvfs_file_name_buffer[1024];
 inline void emscripten_idb_exists(const char *db_name, const char *file_id, int* pexists, int *perror) {
 	snprintf(_idbvfs_file_name_buffer, sizeof(_idbvfs_file_name_buffer), "%s/%s", db_name, file_id);
 	*pexists = stat(_idbvfs_file_name_buffer, nullptr) == 0;
+	*perror = 0;
 }
 
 inline void emscripten_idb_load(const char *db_name, const char *file_id, void** pbuffer, int* pnum, int *perror) {
@@ -23,6 +24,7 @@ inline void emscripten_idb_load(const char *db_name, const char *file_id, void**
 	if (*pbuffer) {
 		fseek(f, 0, SEEK_SET);
 		*pnum = fread(*pbuffer, 1, file_size, f);
+		*perror = 0;
 	}
 	else {
 		*perror = 1;
@@ -41,9 +43,7 @@ inline void emscripten_idb_store(const char *db_name, const char *file_id, void*
 	}
 
 	size_t bytes_written = fwrite(buffer, 1, num, f);
-	if (bytes_written < num) {
-		*perror = 1;
-	}
+	*perror = bytes_written < num;
 	fclose(f);
 }
 
