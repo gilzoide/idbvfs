@@ -276,6 +276,7 @@ struct IdbFile : public SQLiteFileImpl {
 		TRACE_LOG("READ %s %d @ %ld", dbname, iAmt, iOfst);
 
 		if (iAmt + iOfst > file_size.get()) {
+			TRACE_LOG("  > %d", false);
 			return SQLITE_IOERR_SHORT_READ;
 		}
 
@@ -288,6 +289,7 @@ struct IdbFile : public SQLiteFileImpl {
 			IdbDiskSector sector(dbname, sector_index, page_size);
 			int loaded_bytes = sector.load_into(buffer, remaining_bytes, offset_in_page);
 			if (loaded_bytes <= 0) {
+				TRACE_LOG("  > %d", false);
 				return SQLITE_IOERR_SHORT_READ;
 			}
 			buffer += loaded_bytes;
@@ -298,6 +300,7 @@ struct IdbFile : public SQLiteFileImpl {
 		if (iOfst == 0) {
 			read_first_page(p, iAmt);
 		}
+		TRACE_LOG("  > %d", true);
 		return SQLITE_OK;
 	}
 
@@ -317,6 +320,7 @@ struct IdbFile : public SQLiteFileImpl {
 			IdbDiskSector sector(dbname, sector_index, page_size);
 			int written_bytes = sector.store(buffer, remaining_bytes, offset_in_page);
 			if (written_bytes <= 0) {
+				TRACE_LOG("  > 0");
 				return SQLITE_IOERR_WRITE;
 			}
 			buffer += written_bytes;
@@ -325,12 +329,14 @@ struct IdbFile : public SQLiteFileImpl {
 			sector_index++;
 		}
 		bool write_size_success = file_size.update_if_greater(iAmt + iOfst);
+		TRACE_LOG("  > %d", write_size_success);
 		return write_size_success ? SQLITE_OK : SQLITE_IOERR_WRITE;
 	}
 
 	int xTruncate(sqlite3_int64 size) override {
 		TRACE_LOG("TRUNCATE %s to %ld", size);
 		bool success = file_size.set(size);
+		TRACE_LOG("  > %d", success);
 		return success ? SQLITE_OK : SQLITE_IOERR_TRUNCATE;
 	}
 
@@ -339,7 +345,9 @@ struct IdbFile : public SQLiteFileImpl {
 	}
 
 	int xFileSize(sqlite3_int64 *pSize) override {
+		TRACE_LOG("FILE SIZE %s", dbname);
 		*pSize = file_size.get();
+		TRACE_LOG("  > %d", *pSize);
 		return SQLITE_OK;
 	}
 
@@ -389,6 +397,7 @@ private:
 			if (page_size == 1) {
 				page_size = 65536;
 			}
+			TRACE_LOG("PAGE SIZE %s: %d", dbname, page_size);
 		}
 	}
 };
@@ -417,6 +426,7 @@ struct IdbVfs : public SQLiteVfsImpl<IdbFile> {
 		TRACE_LOG("DELETE %s", zName);
 		int error;
 		emscripten_idb_delete(zName, IDBVFS_SIZE_KEY, &error);
+		TRACE_LOG("  > %d", !error);
 		return error ? SQLITE_IOERR_DELETE : SQLITE_OK;
 	}
 
@@ -428,6 +438,7 @@ struct IdbVfs : public SQLiteVfsImpl<IdbFile> {
 			case SQLITE_ACCESS_READ:
 				IdbFileSize file_size(zName, false);
 				*pResOut = file_size.exists();
+				TRACE_LOG("  > %d", *pResOut);
 				return SQLITE_OK;
 		}
 		return SQLITE_NOTFOUND;
