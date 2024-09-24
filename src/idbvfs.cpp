@@ -11,6 +11,18 @@
 	#define DISK_SECTOR_SIZE 1024
 #endif
 
+// SQLite file format offsets
+#define SQLITE_DB_PAGE_SIZE_OFFSET 16
+#define SQLITE_JOURNAL_PAGE_SIZE_OFFSET 24
+#define SQLITE_WAL_PAGE_SIZE_OFFSET 8
+#define SQLITE_MIN_HEADER_SIZE 28
+
+// Helper macros for byte/math operations
+#define LOAD_16_BE(p) \
+	(((uint8_t *) p)[0] << 8) + (((uint8_t *) p)[1])
+#define LOAD_32_BE(p) \
+	(((uint8_t *) p)[0] << 24) + (((uint8_t *) p)[1] << 16) + (((uint8_t *) p)[2] << 8) + (((uint8_t *) p)[3])
+
 /// Return the minimum value between `a` and `b`
 #define MIN(a, b) \
 	((a) < (b) ? (a) : (b))
@@ -48,10 +60,17 @@ static void TRACE_LOG(const char *fmt, ...) {
 using namespace sqlitevfs;
 using namespace std;
 
+enum class SQLiteFileType {
+	Database,
+	Journal,
+	Wal,
+};
+
 class IdbDiskSector {
 public:
-	IdbDiskSector(const char *dbname, int sector_index)
+	IdbDiskSector(const char *dbname, int sector_index, int page_size)
 		: dbname(dbname)
+		, page_size(page_size)
 	{
 		snprintf(filename, sizeof(filename), "%d", sector_index);
 	}
@@ -75,14 +94,14 @@ public:
 		return error ? 0 : size;
 	}
 
-	int load_into(uint8_t *data, int data_size, sqlite3_int64 offset_in_sector) {
+	int load_into(uint8_t *data, int data_size, sqlite3_int64 offset_in_page) {
 		int sector_size = load();
 		if (sector_size <= 0) {
 			return 0;
 		}
-		int copied_bytes = MIN(data_size, sector_size - offset_in_sector);
+		int copied_bytes = MIN(data_size, sector_size - offset_in_page);
 		if (copied_bytes > 0) {
-			memcpy(data, buffer + offset_in_sector, copied_bytes);
+			memcpy(data, buffer + offset_in_page, copied_bytes);
 			return copied_bytes;
 		}
 		else {
@@ -90,14 +109,14 @@ public:
 		}
 	}
 
-	int store(const void *data, int data_size, sqlite3_int64 offset_in_sector) {
+	int store(const void *data, int data_size, sqlite3_int64 offset_in_page) {
 		// offsetted write: read, patch existing data, then write
-		if (offset_in_sector > 0) {
+		if (offset_in_page > 0) {
 			int sector_size = load();
 			if (sector_size <= 0) {
 				return 0;
 			}
-			int written_sector_size = MIN(offset_in_sector + data_size, DISK_SECTOR_SIZE);
+			int written_sector_size = MIN(offset_in_page + data_size, page_size);
 			if (sector_size < written_sector_size) {
 				if (void *new_buffer = realloc(buffer, written_sector_size)) {
 					sector_size = written_sector_size;
@@ -107,17 +126,17 @@ public:
 					return 0;
 				}
 			}
-			int written_bytes = MIN(sector_size - offset_in_sector, data_size);
-			memcpy(buffer + offset_in_sector, data, written_bytes);
+			int written_bytes = MIN(sector_size - offset_in_page, data_size);
+			memcpy(buffer + offset_in_page, data, written_bytes);
 			int error = 0;
 			emscripten_idb_store(dbname, filename, buffer, sector_size, &error);
 			return error ? 0 : written_bytes;
 		}
 		// write full sector: just write a full disk sector
-		else if (data_size >= DISK_SECTOR_SIZE) {
+		else if (data_size >= page_size) {
 			int error = 0;
-			emscripten_idb_store(dbname, filename, (void *) data, DISK_SECTOR_SIZE, &error);
-			return error ? 0 : DISK_SECTOR_SIZE;
+			emscripten_idb_store(dbname, filename, (void *) data, page_size, &error);
+			return error ? 0 : page_size;
 		}
 		// patch sector beginning: read, patch existing data if any, then write
 		else {
@@ -172,6 +191,7 @@ private:
 	const char *dbname;
 	char filename[16];
 	uint8_t *buffer = nullptr;
+	int page_size;
 };
 
 struct IdbFileSize {
@@ -238,9 +258,11 @@ private:
 struct IdbFile : public SQLiteFileImpl {
 	sqlite3_filename dbname;
 	IdbFileSize file_size;
+	SQLiteFileType file_type;
+	int page_size;
 
 	IdbFile() {}
-	IdbFile(sqlite3_filename dbname) : dbname(dbname), file_size(dbname) {}
+	IdbFile(sqlite3_filename dbname, SQLiteFileType file_type) : dbname(dbname), file_size(dbname), file_type(file_type) {}
 
 	int iVersion() const override {
 		return 1;
@@ -258,19 +280,23 @@ struct IdbFile : public SQLiteFileImpl {
 		}
 
 		uint8_t *buffer = (uint8_t *) p;
-		int sector_index = iOfst / DISK_SECTOR_SIZE;
-		int offset_in_sector = iOfst % DISK_SECTOR_SIZE;
+		int sector_index = page_size ? iOfst / page_size : 0;
+		int offset_in_page = page_size ? iOfst % page_size : 0;
 
-		while (iAmt > 0) {
-			IdbDiskSector sector(dbname, sector_index);
-			int loaded_bytes = sector.load_into(buffer, iAmt, offset_in_sector);
+		int remaining_bytes = iAmt;
+		while (remaining_bytes > 0) {
+			IdbDiskSector sector(dbname, sector_index, page_size);
+			int loaded_bytes = sector.load_into(buffer, remaining_bytes, offset_in_page);
 			if (loaded_bytes <= 0) {
 				return SQLITE_IOERR_SHORT_READ;
 			}
 			buffer += loaded_bytes;
-			iAmt -= loaded_bytes;
-			offset_in_sector = 0;
+			remaining_bytes -= loaded_bytes;
+			offset_in_page = 0;
 			sector_index++;
+		}
+		if (iOfst == 0) {
+			read_first_page(p, iAmt);
 		}
 		return SQLITE_OK;
 	}
@@ -278,24 +304,27 @@ struct IdbFile : public SQLiteFileImpl {
 	int xWrite(const void *p, int iAmt, sqlite3_int64 iOfst) override {
 		TRACE_LOG("WRITE %s %d @ %ld", dbname, iAmt, iOfst);
 
-		sqlite3_int64 final_size = iAmt + iOfst;
+		if (iOfst == 0) {
+			read_first_page(p, iAmt);
+		}
 
 		const uint8_t *buffer = (const uint8_t *) p;
-		int sector_index = iOfst / DISK_SECTOR_SIZE;
-		int offset_in_sector = iOfst % DISK_SECTOR_SIZE;
+		int sector_index = page_size ? iOfst / page_size : 0;
+		int offset_in_page = page_size ? iOfst % page_size : 0;
 
-		while (iAmt > 0) {
-			IdbDiskSector sector(dbname, sector_index);
-			int written_bytes = sector.store(buffer, iAmt, offset_in_sector);
+		int remaining_bytes = iAmt;
+		while (remaining_bytes > 0) {
+			IdbDiskSector sector(dbname, sector_index, page_size);
+			int written_bytes = sector.store(buffer, remaining_bytes, offset_in_page);
 			if (written_bytes <= 0) {
 				return SQLITE_IOERR_WRITE;
 			}
 			buffer += written_bytes;
-			iAmt -= written_bytes;
-			offset_in_sector = 0;
+			remaining_bytes -= written_bytes;
+			offset_in_page = 0;
 			sector_index++;
 		}
-		bool write_size_success = file_size.update_if_greater(final_size);
+		bool write_size_success = file_size.update_if_greater(iAmt + iOfst);
 		return write_size_success ? SQLITE_OK : SQLITE_IOERR_WRITE;
 	}
 
@@ -342,12 +371,45 @@ struct IdbFile : public SQLiteFileImpl {
 	int xDeviceCharacteristics() override {
 		return 0;
 	}
+
+private:
+	void read_first_page(const void *p, int size) {
+		if (size >= SQLITE_MIN_HEADER_SIZE) {
+			switch (file_type) {
+				case SQLiteFileType::Database:
+					page_size = LOAD_16_BE(p + SQLITE_DB_PAGE_SIZE_OFFSET);
+					break;
+				case SQLiteFileType::Journal:
+					page_size = LOAD_32_BE(p + SQLITE_JOURNAL_PAGE_SIZE_OFFSET);
+					break;
+				case SQLiteFileType::Wal:
+					page_size = LOAD_32_BE(p + SQLITE_WAL_PAGE_SIZE_OFFSET);
+					break;
+			}
+			if (page_size == 1) {
+				page_size = 65536;
+			}
+		}
+	}
 };
 
 struct IdbVfs : public SQLiteVfsImpl<IdbFile> {
 	int xOpen(sqlite3_filename zName, SQLiteFile<IdbFile> *file, int flags, int *pOutFlags) override {
 		TRACE_LOG("OPEN %s", zName);
-		file->implementation = IdbFile(zName);
+		SQLiteFileType file_type;
+		if ((flags & SQLITE_OPEN_MAIN_DB) || (flags & SQLITE_OPEN_TEMP_DB)) {
+			file_type = SQLiteFileType::Database;
+		}
+		else if ((flags & SQLITE_OPEN_MAIN_JOURNAL) || (flags & SQLITE_OPEN_TEMP_JOURNAL)) {
+			file_type = SQLiteFileType::Journal;
+		}
+		else if (flags & SQLITE_OPEN_WAL) {
+			file_type = SQLiteFileType::Wal;
+		}
+		else {
+			return SQLITE_CANTOPEN;
+		}
+		file->implementation = IdbFile(zName, file_type);
 		return SQLITE_OK;
 	}
 
