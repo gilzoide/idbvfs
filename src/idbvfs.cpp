@@ -8,7 +8,7 @@
 
 /// Used size for Indexed DB "disk sectors"
 #ifndef DISK_SECTOR_SIZE
-	#define DISK_SECTOR_SIZE 1024
+	#define DISK_SECTOR_SIZE 32
 #endif
 
 // SQLite file format offsets
