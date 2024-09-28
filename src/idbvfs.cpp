@@ -62,11 +62,10 @@ using namespace sqlitevfs;
 
 class IdbPage {
 public:
-	IdbPage(const char *dbname, int sector_index, int page_size)
+	IdbPage(const char *dbname, int page_number)
 		: dbname(dbname)
-		, page_size(page_size)
 	{
-		snprintf(filename, sizeof(filename), "%d", sector_index);
+		snprintf(filename, sizeof(filename), "%d", page_number);
 	}
 
 	~IdbPage() {
@@ -112,50 +111,10 @@ public:
 		return loaded_size;
 	}
 
-	int store(const void *data, int data_size, sqlite3_int64 offset_in_page) {
-		// offsetted write: read, patch existing data, then write
-		if (offset_in_page > 0) {
-			int sector_size = load();
-			if (sector_size <= 0) {
-				return 0;
-			}
-			int written_sector_size = MIN(offset_in_page + data_size, page_size);
-			if (sector_size < written_sector_size) {
-				if (void *new_buffer = realloc(buffer, written_sector_size)) {
-					sector_size = written_sector_size;
-					buffer = (uint8_t *) new_buffer;
-				}
-				else {
-					return 0;
-				}
-			}
-			int written_bytes = MIN(sector_size - offset_in_page, data_size);
-			memcpy(buffer + offset_in_page, data, written_bytes);
-			int error = 0;
-			emscripten_idb_store(dbname, filename, buffer, sector_size, &error);
-			return error ? 0 : written_bytes;
-		}
-		// write full sector: just write a full disk sector
-		else if (data_size >= page_size) {
-			int error = 0;
-			emscripten_idb_store(dbname, filename, (void *) data, page_size, &error);
-			return error ? 0 : page_size;
-		}
-		// patch sector beginning: read, patch existing data if any, then write
-		else {
-			int sector_size = load();
-			if (sector_size > data_size) {
-				memcpy(buffer, data, data_size);
-				int error = 0;
-				emscripten_idb_store(dbname, filename, buffer, sector_size, &error);
-				return error ? 0 : data_size;
-			}
-			else {
-				int error = 0;
-				emscripten_idb_store(dbname, filename, (void *) data, data_size, &error);
-				return error ? 0 : data_size;
-			}
-		}
+	int store(const void *data, int data_size) {
+		int error;
+		emscripten_idb_store(dbname, filename, (void*) data, data_size, &error);
+		return error ? 0 : data_size;
 	}
 
 	bool truncate(sqlite3_int64 new_size) {
@@ -194,7 +153,6 @@ private:
 	const char *dbname;
 	char filename[16];
 	uint8_t *buffer = nullptr;
-	int page_size;
 };
 
 struct IdbFileSize {
@@ -316,8 +274,8 @@ struct IdbFile : public SQLiteFileImpl {
 	int xSync(int flags) override {
 		// journal data is stored in-memory and synced all at once
 		if (!journal_data.empty()) {
-			IdbPage file(file_name, 0, journal_data.size());
-			file.store(journal_data.data(), journal_data.size(), 0);
+			IdbPage file(file_name, 0);
+			file.store(journal_data.data(), journal_data.size());
 			file_size.set(journal_data.size());
 		}
 		return SQLITE_OK;
@@ -380,7 +338,7 @@ private:
 			offset_in_page = iOfst;
 		}
 
-		IdbPage page(file_name, page_number, iAmt);
+		IdbPage page(file_name, page_number);
 		int loaded_bytes = page.load_into((uint8_t*) p, iAmt, offset_in_page);
 		if (loaded_bytes < iAmt) {
 			return SQLITE_IOERR_SHORT_READ;
@@ -395,7 +353,7 @@ private:
 			size_t journal_size = file_size.get();
 			if (journal_size > 0) {
 				journal_data.resize(journal_size);
-				IdbPage page(file_name, 0, journal_size);
+				IdbPage page(file_name, 0);
 				page.load_into(journal_data);
 			}
 		}
@@ -408,10 +366,9 @@ private:
 
 	int writeDb(const void *p, int iAmt, sqlite3_int64 iOfst) {
 		int page_number = iOfst ? iOfst / iAmt : 0;
-		int offset_in_page = iOfst ? iOfst % iAmt : 0;
 
-		IdbPage page(file_name, page_number, iAmt);
-		int stored_bytes = page.store(p, iAmt, offset_in_page);
+		IdbPage page(file_name, page_number);
+		int stored_bytes = page.store(p, iAmt);
 		if (stored_bytes < iAmt) {
 			return SQLITE_IOERR_WRITE;
 		}
