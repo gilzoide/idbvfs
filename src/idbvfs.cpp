@@ -109,18 +109,6 @@ public:
 		return store(data.data(), data.size());
 	}
 
-	bool truncate(sqlite3_int64 new_size) {
-		int sector_size = load();
-		if (sector_size > new_size) {
-			int error = 0;
-			emscripten_idb_store(dbname, filename, buffer, new_size, &error);
-			return !error;
-		}
-		else {
-			return false;
-		}
-	}
-
 	bool remove() {
 		int exists = 0;
 		int error = 0;
