@@ -173,6 +173,7 @@ struct IdbFileSize {
 		else {
 			sscanf((const char *) size_buffer, "%lu", &file_size);
 			free(size_buffer);
+			is_dirty = false;
 		}
 	}
 
@@ -181,7 +182,10 @@ struct IdbFileSize {
 	}
 
 	void set(size_t new_file_size) {
-		file_size = new_file_size;
+		if (new_file_size != file_size) {
+			file_size = new_file_size;
+			is_dirty = true;
+		}
 	}
 
 	void update_if_greater(size_t new_file_size) {
@@ -191,6 +195,9 @@ struct IdbFileSize {
 	}
 
 	bool sync() {
+		if (!is_dirty) {
+			return true;
+		}
 		char buffer[16];
 		int written_size = snprintf(buffer, sizeof(buffer), "%lu", file_size);
 		int error;
@@ -201,6 +208,7 @@ struct IdbFileSize {
 private:
 	sqlite3_filename file_name;
 	size_t file_size = 0;
+	bool is_dirty = false;
 };
 
 struct IdbFile : public SQLiteFileImpl {
@@ -259,7 +267,7 @@ struct IdbFile : public SQLiteFileImpl {
 	}
 
 	int xSync(int flags) override {
-		TRACE_LOG("SYNC %s", file_name);
+		TRACE_LOG("SYNC %s %d", file_name, flags);
 		// journal data is stored in-memory and synced all at once
 		if (!journal_data.empty()) {
 			IdbPage file(file_name, 0);
