@@ -1,6 +1,8 @@
 #include <cstdio>
-#include <cstdlib>
 #include <cstring>
+#include <string>
+#include <sys/stat.h>
+#include <unistd.h>
 #include <vector>
 
 #include <SQLiteVfs.hpp>
@@ -22,10 +24,6 @@
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
-#else
-// Polyfill used solely for automated testing.
-// Do not use this VFS without emscripten on any other circumstance.
-#include "../tests/emscripten_polyfill.hpp"
 #endif
 
 
@@ -50,117 +48,89 @@ using namespace sqlitevfs;
 
 class IdbPage {
 public:
-	IdbPage(const char *dbname, int page_number)
+	IdbPage() {}
+
+	IdbPage(const char *dbname, const char *subfilename)
 		: dbname(dbname)
+		, filename(dbname)
 	{
-		snprintf(filename, sizeof(filename), "%d", page_number);
+		filename.append("/");
+		filename.append(subfilename);
 	}
 
-	~IdbPage() {
-		dispose();
+	IdbPage(const char *dbname, int page_number)
+		: IdbPage(dbname, std::to_string(page_number).c_str())
+	{
 	}
 
 	bool exists() const {
-		int exists = 0;
-		int error = 0;
-		emscripten_idb_exists(dbname, filename, &exists, &error);
-		return !error && exists;
-	}
-
-	int load() {
-		dispose();
-		int size = 0;
-		int error = 0;
-		emscripten_idb_load(dbname, filename, (void **) &buffer, &size, &error);
-		return error ? 0 : size;
-	}
-
-	int load_into(uint8_t *data, int data_size, sqlite3_int64 offset_in_page) {
-		int loaded_size = load();
-		if (loaded_size <= 0) {
-			return 0;
-		}
-		int copied_bytes = MIN(data_size, loaded_size - offset_in_page);
-		if (copied_bytes > 0) {
-			memcpy(data, buffer + offset_in_page, copied_bytes);
-			return copied_bytes;
-		}
-		else {
-			return 0;
-		}
-	}
-
-	int load_into(std::vector<uint8_t>& out_buffer) {
-		int loaded_size = load();
-		out_buffer.resize(loaded_size);
-		if (loaded_size > 0) {
-			memcpy(out_buffer.data(), buffer, loaded_size);
-		}
-		return loaded_size;
-	}
-
-	int store(const void *data, int data_size) {
-		int error;
-		emscripten_idb_store(dbname, filename, (void*) data, data_size, &error);
-		return error ? 0 : data_size;
-	}
-
-	int store(const std::vector<uint8_t> data) {
-		return store(data.data(), data.size());
-	}
-
-	bool remove() {
-		int exists = 0;
-		int error = 0;
-		emscripten_idb_exists(dbname, filename, &exists, &error);
-		if (exists) {
-			emscripten_idb_delete(dbname, filename, &error);
-			return !error;
+		if (FILE *f = fopen(filename.c_str(), "rb")) {
+			fclose(f);
+			return true;
 		}
 		else {
 			return false;
 		}
 	}
 
-	void dispose() {
-		if (buffer) {
-			free(buffer);
-			buffer = nullptr;
+	int load_into(void *data, size_t data_size, sqlite3_int64 offset_in_page = 0) const {
+		if (FILE *f = fopen(filename.c_str(), "rb")) {
+			if (offset_in_page > 0) {
+				fseek(f, offset_in_page, SEEK_SET);
+			}
+			size_t read_bytes = fread(data, 1, data_size, f);
+			fclose(f);
+			return read_bytes;
 		}
+		else {
+			return 0;
+		}
+	}
+
+	int load_into(std::vector<uint8_t>& out_buffer, size_t data_size) const {
+		out_buffer.resize(data_size);
+		return load_into(out_buffer.data(), data_size);
+	}
+
+	int store(const void *data, size_t data_size) const {
+		mkdir(dbname, 0777);
+
+		if (FILE *f = fopen(filename.c_str(), "wb")) {
+			size_t written_bytes = fwrite(data, 1, data_size, f);
+			fclose(f);
+			return written_bytes;
+		}
+		else {
+			return 0;
+		}
+	}
+
+	int store(const std::vector<uint8_t>& data) const {
+		return store(data.data(), data.size());
+	}
+
+	bool remove() const {
+		return unlink(filename.c_str()) == 0;
 	}
 
 private:
 	const char *dbname;
-	char filename[16];
-	uint8_t *buffer = nullptr;
+	std::string filename;
 };
 
-struct IdbFileSize {
-	IdbFileSize() {}
-	IdbFileSize(sqlite3_filename file_name, bool autoload = true) : file_name(file_name) {
+struct IdbFileSize : public IdbPage {
+	IdbFileSize() : IdbPage() {}
+	IdbFileSize(sqlite3_filename file_name, bool autoload = true) : IdbPage(file_name, IDBVFS_SIZE_KEY) {
 		if (autoload) {
 			load();
 		}
 	}
 
-	bool exists() const {
-		int exists = 0;
-		int error = 0;
-		emscripten_idb_exists(file_name, IDBVFS_SIZE_KEY, &exists, &error);
-		return !error && exists;
-	}
-
 	void load() {
-		void *size_buffer;
-		int size_buffer_size;
-		int error;
-		emscripten_idb_load(file_name, IDBVFS_SIZE_KEY, &size_buffer, &size_buffer_size, &error);
-		if (error) {
-			file_size = 0;
-		}
-		else {
-			sscanf((const char *) size_buffer, "%lu", &file_size);
-			free(size_buffer);
+		char size_buffer[16];
+		int loaded_bytes = load_into(size_buffer, sizeof(size_buffer));
+		if (loaded_bytes > 0 && loaded_bytes < sizeof(size_buffer)) {
+			sscanf(size_buffer, "%lu", &file_size);
 			is_dirty = false;
 		}
 	}
@@ -182,19 +152,13 @@ struct IdbFileSize {
 		}
 	}
 
-	bool sync() {
-		if (!is_dirty) {
-			return true;
-		}
+	bool sync() const {
 		char buffer[16];
 		int written_size = snprintf(buffer, sizeof(buffer), "%lu", file_size);
-		int error;
-		emscripten_idb_store(file_name, IDBVFS_SIZE_KEY, buffer, MIN(written_size, sizeof(buffer)), &error);
-		return error == 0;
+		return store(buffer, MIN(written_size, sizeof(buffer))) > 0;
 	}
 
 private:
-	sqlite3_filename file_name;
 	size_t file_size = 0;
 	bool is_dirty = false;
 };
@@ -263,6 +227,13 @@ struct IdbFile : public SQLiteFileImpl {
 			file_size.set(journal_data.size());
 		}
 		bool success = file_size.sync();
+#ifdef __EMSCRIPTEN__
+		EM_ASM({
+			FS.syncfs(false, function(e) {
+				if (e) console.error(e);
+			});
+		});
+#endif
 		TRACE_LOG("  > %d", success);
 		return success ? SQLITE_OK : SQLITE_IOERR_FSYNC;
 	}
@@ -339,7 +310,7 @@ private:
 			size_t journal_size = file_size.get();
 			if (journal_size > 0) {
 				IdbPage page(file_name, 0);
-				page.load_into(journal_data);
+				page.load_into(journal_data, journal_size);
 			}
 		}
 		if (iAmt + iOfst > journal_data.size()) {
@@ -381,16 +352,19 @@ struct IdbVfs : public SQLiteVfsImpl<IdbFile> {
 
 	int xDelete(const char *zName, int syncDir) override {
 		TRACE_LOG("DELETE %s", zName);
-		int error;
-		emscripten_idb_delete(zName, IDBVFS_SIZE_KEY, &error);
+		IdbFileSize file_size(zName, false);
+		if (!file_size.remove()) {
+			return SQLITE_IOERR_DELETE;
+		}
+
 		for (int i = 0; ; i++) {
 			IdbPage page(zName, i);
 			if (!page.remove()) {
 				break;
 			}
 		}
-		TRACE_LOG("  > %d", !error);
-		return error ? SQLITE_IOERR_DELETE : SQLITE_OK;
+		rmdir(zName);
+		return SQLITE_OK;
 	}
 
 	int xAccess(const char *zName, int flags, int *pResOut) override {
