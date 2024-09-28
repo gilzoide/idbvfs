@@ -180,27 +180,22 @@ struct IdbFileSize {
 		return file_size;
 	}
 
-	bool set(size_t new_file_size) {
-		char buffer[16];
-		int written_size = snprintf(buffer, sizeof(buffer), "%lu", new_file_size);
-		int error;
-		emscripten_idb_store(file_name, IDBVFS_SIZE_KEY, buffer, MIN(written_size, sizeof(buffer)), &error);
-		if (error) {
-			return false;
-		}
-		else {
-			file_size = new_file_size;
-			return true;
+	void set(size_t new_file_size) {
+		file_size = new_file_size;
+	}
+
+	void update_if_greater(size_t new_file_size) {
+		if (new_file_size > file_size) {
+			set(new_file_size);
 		}
 	}
 
-	bool update_if_greater(size_t new_file_size) {
-		if (new_file_size > file_size) {
-			return set(new_file_size);
-		}
-		else {
-			return true;
-		}
+	bool sync() {
+		char buffer[16];
+		int written_size = snprintf(buffer, sizeof(buffer), "%lu", file_size);
+		int error;
+		emscripten_idb_store(file_name, IDBVFS_SIZE_KEY, buffer, MIN(written_size, sizeof(buffer)), &error);
+		return error == 0;
 	}
 
 private:
@@ -257,20 +252,23 @@ struct IdbFile : public SQLiteFileImpl {
 	}
 
 	int xTruncate(sqlite3_int64 size) override {
-		TRACE_LOG("TRUNCATE %s to %ld", size);
-		bool success = file_size.set(size);
-		TRACE_LOG("  > %d", success);
-		return success ? SQLITE_OK : SQLITE_IOERR_TRUNCATE;
+		TRACE_LOG("TRUNCATE %s to %ld", file_name, size);
+		file_size.set(size);
+		TRACE_LOG("  > %d", true);
+		return SQLITE_OK;
 	}
 
 	int xSync(int flags) override {
+		TRACE_LOG("SYNC %s", file_name);
 		// journal data is stored in-memory and synced all at once
 		if (!journal_data.empty()) {
 			IdbPage file(file_name, 0);
 			file.store(journal_data);
 			file_size.set(journal_data.size());
 		}
-		return SQLITE_OK;
+		bool success = file_size.sync();
+		TRACE_LOG("  > %d", success);
+		return success ? SQLITE_OK : SQLITE_IOERR_FSYNC;
 	}
 
 	int xFileSize(sqlite3_int64 *pSize) override {
@@ -364,8 +362,8 @@ private:
 			return SQLITE_IOERR_WRITE;
 		}
 
-		bool stored_size = file_size.update_if_greater(iAmt + iOfst);
-		return stored_size ? SQLITE_OK : SQLITE_IOERR_WRITE;
+		file_size.update_if_greater(iAmt + iOfst);
+		return SQLITE_OK;
 	}
 
 	int writeJournal(const void *p, int iAmt, sqlite3_int64 iOfst) {
