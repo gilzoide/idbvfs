@@ -28,14 +28,14 @@ static int sql_callback(void *userdata, int column_count, char **column_values, 
 	return SQLITE_OK;
 }
 
-static int initialize_sql() {
+static int initialize_sql(const char *dbname) {
 	idbvfs_register(true);
-	return sqlite3_open_v2("idbvfs-demo", &db, SQLITE_OPEN_CREATE | SQLITE_OPEN_READWRITE, IDBVFS_NAME);
+	return sqlite3_open_v2(dbname, &db, SQLITE_OPEN_CREATE | SQLITE_OPEN_READWRITE, IDBVFS_NAME);
 }
 
-extern "C" void run_sql(const char *sql) {
+extern "C" void run_sql(const char *dbname, const char *sql) {
 	if (!db) {
-		int result = initialize_sql();
+		int result = initialize_sql(dbname);
 		if (result != SQLITE_OK) {
 			if (const char *errmsg = sqlite3_errmsg(db)) {
 				EM_ASM({

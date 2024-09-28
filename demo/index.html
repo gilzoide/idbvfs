@@ -47,7 +47,7 @@
         isRunningSql = true
         sqloutput.innerText = ""
         var timeBefore = Date.now()
-        Module.ccall('run_sql', null, ['string'], [sqlinput.value], { async: true }).then(() => {
+        Module.ccall('run_sql', null, ['string', 'string'], ["idbvfs-demo", sqlinput.value], { async: true }).then(() => {
           var timeDiff = Date.now() - timeBefore
           if (!sqloutput.innerText) {
             sqloutput.innerText = "OK!"
