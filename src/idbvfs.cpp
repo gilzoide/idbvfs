@@ -12,18 +12,6 @@
 	#define DISK_SECTOR_SIZE 32
 #endif
 
-// SQLite file format offsets
-#define SQLITE_DB_PAGE_SIZE_OFFSET 16
-#define SQLITE_JOURNAL_PAGE_SIZE_OFFSET 24
-#define SQLITE_WAL_PAGE_SIZE_OFFSET 8
-#define SQLITE_MIN_HEADER_SIZE 28
-
-// Helper macros for byte/math operations
-#define LOAD_16_BE(p) \
-	(((uint8_t *) p)[0] << 8) + (((uint8_t *) p)[1])
-#define LOAD_32_BE(p) \
-	(((uint8_t *) p)[0] << 24) + (((uint8_t *) p)[1] << 16) + (((uint8_t *) p)[2] << 8) + (((uint8_t *) p)[3])
-
 /// Return the minimum value between `a` and `b`
 #define MIN(a, b) \
 	((a) < (b) ? (a) : (b))
