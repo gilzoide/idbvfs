@@ -105,6 +105,10 @@ public:
 		return error ? 0 : data_size;
 	}
 
+	int store(const std::vector<uint8_t> data) {
+		return store(data.data(), data.size());
+	}
+
 	bool truncate(sqlite3_int64 new_size) {
 		int sector_size = load();
 		if (sector_size > new_size) {
@@ -263,7 +267,7 @@ struct IdbFile : public SQLiteFileImpl {
 		// journal data is stored in-memory and synced all at once
 		if (!journal_data.empty()) {
 			IdbPage file(file_name, 0);
-			file.store(journal_data.data(), journal_data.size());
+			file.store(journal_data);
 			file_size.set(journal_data.size());
 		}
 		return SQLITE_OK;
