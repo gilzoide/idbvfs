@@ -344,7 +344,6 @@ private:
 		if (journal_data.empty()) {
 			size_t journal_size = file_size.get();
 			if (journal_size > 0) {
-				journal_data.resize(journal_size);
 				IdbPage page(file_name, 0);
 				page.load_into(journal_data);
 			}
