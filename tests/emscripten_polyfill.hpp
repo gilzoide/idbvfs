@@ -6,7 +6,14 @@ static char _idbvfs_file_name_buffer[1024];
 
 inline void emscripten_idb_exists(const char *db_name, const char *file_id, int* pexists, int *perror) {
 	snprintf(_idbvfs_file_name_buffer, sizeof(_idbvfs_file_name_buffer), "%s/%s", db_name, file_id);
-	*pexists = stat(_idbvfs_file_name_buffer, nullptr) == 0;
+	FILE *f = fopen(_idbvfs_file_name_buffer, "rb");
+	if (f) {
+		fclose(f);
+		*pexists = 1;
+	}
+	else {
+		*pexists = 0;
+	}
 	*perror = 0;
 }
 

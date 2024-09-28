@@ -398,6 +398,12 @@ struct IdbVfs : public SQLiteVfsImpl<IdbFile> {
 		TRACE_LOG("DELETE %s", zName);
 		int error;
 		emscripten_idb_delete(zName, IDBVFS_SIZE_KEY, &error);
+		for (int i = 0; ; i++) {
+			IdbPage page(zName, i);
+			if (!page.remove()) {
+				break;
+			}
+		}
 		TRACE_LOG("  > %d", !error);
 		return error ? SQLITE_IOERR_DELETE : SQLITE_OK;
 	}
