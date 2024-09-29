@@ -1,11 +1,7 @@
 # idbvfs
-WebAssembly [SQLite](https://sqlite.org/) [VFS](https://www.sqlite.org/vfs.html) for web browsers, powered by [IndexedDB](https://developer.mozilla.org/en-US/docs/Web/API/IndexedDB_API).
+WebAssembly + Emscripten [SQLite](https://sqlite.org/) [VFS](https://www.sqlite.org/vfs.html) for web browsers, powered by [IndexedDB](https://developer.mozilla.org/en-US/docs/Web/API/IndexedDB_API).
 
 Checkout the live demo: https://gilzoide.github.io/idbvfs/
-
-Note: this project implements only the SQLite VFS that uses IndexedDB for persistence.
-You must compile and link SQLite with your app yourself.
-This project is supposed to be statically linked to your WebAssembly applications.
 
 
 ### This project is for...
@@ -14,6 +10,14 @@ This project is supposed to be statically linked to your WebAssembly application
 
 ### This project is NOT for...
 - Web browser applications that use SQLite from JavaScript, like users of [sqlite3.wasm](https://sqlite.org/wasm) or [sql.js](https://sql.js.org/)
+
+
+## Caveats
+- This project implements only the SQLite VFS that uses IndexedDB for persistence.
+  You must compile and link SQLite with your app yourself.
+  This project is supposed to be statically linked to your WebAssembly applications.
+- This VFS does not implement any file locking mechanism.
+  Just make sure there's a single database connection to each file and you should be fine.
 
 
 ## How to use
@@ -49,12 +53,8 @@ add_subdirectory(path/to/idbvfs)
 
 # 2. Link your library/executable to the `idbvfs` library
 # This will also add the necessary includes for `idbvfs.h`
-# as well as link the IDBFS and turn on ASYNCIFY
+# as well as link the IDBFS library
 target_link_libraries(my-wasm-app PUBLIC idbvfs)
-
-# 3. (optional) Configure a bigger `ASYNCIFY_STACK_SIZE` if you
-# have problems when running SQLite code due to Asyncify stack size.
-target_link_options(my-wasm-app PUBLIC -sASYNCIFY_STACK_SIZE=24576)
 ```
 
 
@@ -66,9 +66,8 @@ emcmake cmake . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 
 # 2. Link your app with `build/libidbvfs.a`.
-# Don't forget to add `-lidbfs.js` and `-sASYNCIFY=1` link options
-# or idbvfs will not work!
+# Don't forget to add `-lidbfs.js` link option or idbvfs will not work!
 emcc -o my-wasm-app my-wasm-app.o \
-  -lidbfs.js -sASYNCIFY=1 \
+  -lidbfs.js \
   -Lidbvfs/build -lidbvfs
 ```

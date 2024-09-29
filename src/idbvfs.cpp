@@ -1,6 +1,9 @@
+#include <cstdarg>
 #include <cstdio>
-#include <cstdlib>
 #include <cstring>
+#include <string>
+#include <sys/stat.h>
+#include <unistd.h>
 #include <vector>
 
 #include <SQLiteVfs.hpp>
@@ -22,10 +25,9 @@
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
+#define INLINE_JS(...) EM_ASM(__VA_ARGS__)
 #else
-// Polyfill used solely for automated testing.
-// Do not use this VFS without emscripten on any other circumstance.
-#include "../tests/emscripten_polyfill.hpp"
+#define INLINE_JS(...)
 #endif
 
 
@@ -50,131 +52,105 @@ using namespace sqlitevfs;
 
 class IdbPage {
 public:
-	IdbPage(const char *dbname, int page_number)
+	IdbPage() {}
+
+	IdbPage(const char *dbname, const char *subfilename)
 		: dbname(dbname)
+		, filename(dbname)
 	{
-		snprintf(filename, sizeof(filename), "%d", page_number);
+		filename.append("/");
+		filename.append(subfilename);
 	}
 
-	~IdbPage() {
-		dispose();
+	IdbPage(const char *dbname, int page_number)
+		: IdbPage(dbname, std::to_string(page_number).c_str())
+	{
 	}
 
 	bool exists() const {
-		int exists = 0;
-		int error = 0;
-		emscripten_idb_exists(dbname, filename, &exists, &error);
-		return !error && exists;
-	}
-
-	int load() {
-		dispose();
-		int size = 0;
-		int error = 0;
-		emscripten_idb_load(dbname, filename, (void **) &buffer, &size, &error);
-		return error ? 0 : size;
-	}
-
-	int load_into(uint8_t *data, int data_size, sqlite3_int64 offset_in_page) {
-		int loaded_size = load();
-		if (loaded_size <= 0) {
-			return 0;
+		if (FILE *f = fopen(filename.c_str(), "r")) {
+			fclose(f);
+			return true;
 		}
-		int copied_bytes = MIN(data_size, loaded_size - offset_in_page);
-		if (copied_bytes > 0) {
-			memcpy(data, buffer + offset_in_page, copied_bytes);
-			return copied_bytes;
+		else {
+			return false;
+		}
+	}
+
+	int load_into(void *data, size_t data_size, sqlite3_int64 offset_in_page = 0) const {
+		if (FILE *f = fopen(filename.c_str(), "r")) {
+			if (offset_in_page > 0) {
+				fseek(f, offset_in_page, SEEK_SET);
+			}
+			size_t read_bytes = fread(data, 1, data_size, f);
+			fclose(f);
+			return read_bytes;
 		}
 		else {
 			return 0;
 		}
 	}
 
-	int load_into(std::vector<uint8_t>& out_buffer) {
-		int loaded_size = load();
-		out_buffer.resize(loaded_size);
-		if (loaded_size > 0) {
-			memcpy(out_buffer.data(), buffer, loaded_size);
+	int load_into(std::vector<uint8_t>& out_buffer, size_t data_size) const {
+		out_buffer.resize(data_size);
+		return load_into(out_buffer.data(), data_size);
+	}
+
+	int scan_into(const char *fmt, ...) const {
+		if (FILE *f = fopen(filename.c_str(), "r")) {
+			va_list args;
+			va_start(args, fmt);
+			int assigned_items = vfscanf(f, fmt, args);
+			va_end(args);
+			fclose(f);
+			return assigned_items;
 		}
-		return loaded_size;
+		else {
+			return 0;
+		}
 	}
 
-	int store(const void *data, int data_size) {
-		int error;
-		emscripten_idb_store(dbname, filename, (void*) data, data_size, &error);
-		return error ? 0 : data_size;
+	int store(const void *data, size_t data_size) const {
+		mkdir(dbname, 0777);
+
+		if (FILE *f = fopen(filename.c_str(), "w")) {
+			size_t written_bytes = fwrite(data, 1, data_size, f);
+			fclose(f);
+			return written_bytes;
+		}
+		else {
+			return 0;
+		}
 	}
 
-	int store(const std::vector<uint8_t> data) {
+	int store(const std::vector<uint8_t>& data) const {
 		return store(data.data(), data.size());
 	}
 
-	bool truncate(sqlite3_int64 new_size) {
-		int sector_size = load();
-		if (sector_size > new_size) {
-			int error = 0;
-			emscripten_idb_store(dbname, filename, buffer, new_size, &error);
-			return !error;
-		}
-		else {
-			return false;
-		}
+	int store(const std::string& data) const {
+		return store(data.c_str(), data.size());
 	}
 
-	bool remove() {
-		int exists = 0;
-		int error = 0;
-		emscripten_idb_exists(dbname, filename, &exists, &error);
-		if (exists) {
-			emscripten_idb_delete(dbname, filename, &error);
-			return !error;
-		}
-		else {
-			return false;
-		}
-	}
-
-	void dispose() {
-		if (buffer) {
-			free(buffer);
-			buffer = nullptr;
-		}
+	bool remove() const {
+		return unlink(filename.c_str()) == 0;
 	}
 
 private:
 	const char *dbname;
-	char filename[16];
-	uint8_t *buffer = nullptr;
+	std::string filename;
 };
 
-struct IdbFileSize {
-	IdbFileSize() {}
-	IdbFileSize(sqlite3_filename file_name, bool autoload = true) : file_name(file_name) {
+struct IdbFileSize : public IdbPage {
+	IdbFileSize() : IdbPage() {}
+	IdbFileSize(sqlite3_filename file_name, bool autoload = true) : IdbPage(file_name, IDBVFS_SIZE_KEY) {
 		if (autoload) {
 			load();
 		}
 	}
 
-	bool exists() const {
-		int exists = 0;
-		int error = 0;
-		emscripten_idb_exists(file_name, IDBVFS_SIZE_KEY, &exists, &error);
-		return !error && exists;
-	}
-
 	void load() {
-		void *size_buffer;
-		int size_buffer_size;
-		int error;
-		emscripten_idb_load(file_name, IDBVFS_SIZE_KEY, &size_buffer, &size_buffer_size, &error);
-		if (error) {
-			file_size = 0;
-		}
-		else {
-			sscanf((const char *) size_buffer, "%lu", &file_size);
-			free(size_buffer);
-			is_dirty = false;
-		}
+		scan_into("%lu", &file_size);
+		is_dirty = false;
 	}
 
 	size_t get() const {
@@ -194,19 +170,16 @@ struct IdbFileSize {
 		}
 	}
 
-	bool sync() {
-		if (!is_dirty) {
+	bool sync() const {
+		if (is_dirty) {
+			return store(std::to_string(file_size)) > 0;
+		}
+		else {
 			return true;
 		}
-		char buffer[16];
-		int written_size = snprintf(buffer, sizeof(buffer), "%lu", file_size);
-		int error;
-		emscripten_idb_store(file_name, IDBVFS_SIZE_KEY, buffer, MIN(written_size, sizeof(buffer)), &error);
-		return error == 0;
 	}
 
 private:
-	sqlite3_filename file_name;
 	size_t file_size = 0;
 	bool is_dirty = false;
 };
@@ -275,6 +248,9 @@ struct IdbFile : public SQLiteFileImpl {
 			file_size.set(journal_data.size());
 		}
 		bool success = file_size.sync();
+		INLINE_JS({
+			Module.idbvfsSyncfs();
+		});
 		TRACE_LOG("  > %d", success);
 		return success ? SQLITE_OK : SQLITE_IOERR_FSYNC;
 	}
@@ -351,7 +327,7 @@ private:
 			size_t journal_size = file_size.get();
 			if (journal_size > 0) {
 				IdbPage page(file_name, 0);
-				page.load_into(journal_data);
+				page.load_into(journal_data, journal_size);
 			}
 		}
 		if (iAmt + iOfst > journal_data.size()) {
@@ -393,16 +369,19 @@ struct IdbVfs : public SQLiteVfsImpl<IdbFile> {
 
 	int xDelete(const char *zName, int syncDir) override {
 		TRACE_LOG("DELETE %s", zName);
-		int error;
-		emscripten_idb_delete(zName, IDBVFS_SIZE_KEY, &error);
+		IdbFileSize file_size(zName, false);
+		if (!file_size.remove()) {
+			return SQLITE_IOERR_DELETE;
+		}
+
 		for (int i = 0; ; i++) {
 			IdbPage page(zName, i);
 			if (!page.remove()) {
 				break;
 			}
 		}
-		TRACE_LOG("  > %d", !error);
-		return error ? SQLITE_IOERR_DELETE : SQLITE_OK;
+		rmdir(zName);
+		return SQLITE_OK;
 	}
 
 	int xAccess(const char *zName, int flags, int *pResOut) override {
@@ -418,6 +397,18 @@ struct IdbVfs : public SQLiteVfsImpl<IdbFile> {
 		}
 		return SQLITE_NOTFOUND;
 	}
+
+#ifdef __EMSCRIPTEN__
+	int xFullPathname(const char *zName, int nOut, char *zOut) override {
+		TRACE_LOG("FULL PATH %s", zName);
+		if (zName[0] == '/') {
+			zName++;
+		}
+		snprintf(zOut, nOut, "/idbvfs/%s", zName);
+		TRACE_LOG(" > %s", zOut);
+		return SQLITE_OK;
+	}
+#endif
 };
 
 extern "C" {
@@ -425,6 +416,32 @@ extern "C" {
 
 	int idbvfs_register(int makeDefault) {
 		static SQLiteVfs<IdbVfs> idbvfs(IDBVFS_NAME);
+		INLINE_JS({
+			if (!Module.idbvfsSyncfs) {
+				// Mount IDBFS to the "/idbvfs" directory
+				// which is used as the root path for all files
+				FS.mkdir("/idbvfs");
+				FS.mount(IDBFS, {}, "/idbvfs");
+				FS.syncfs(true, function(e) { if (e) console.error(e); });
+
+				// Run FS.syncfs in a queue, to avoid concurrent execution errors
+				var syncQueue = 0;
+				function doSync() {
+					FS.syncfs(false, function() {
+						syncQueue--;
+						if (syncQueue > 0) {
+							doSync();
+						}
+					});
+				}
+				Module.idbvfsSyncfs = function() {
+					syncQueue++;
+					if (syncQueue == 1) {
+						doSync();
+					}
+				};
+			}
+		});
 		return idbvfs.register_vfs(makeDefault);
 	}
 }

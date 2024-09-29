@@ -1,4 +1,4 @@
-add_library(idbvfs idbvfs.cpp)
+add_library(idbvfs idbvfs.cpp idbvfs.h)
 target_compile_features(idbvfs PUBLIC cxx_std_11)
 target_compile_options(idbvfs PRIVATE -fno-rtti -fno-exceptions)
 target_include_directories(idbvfs
@@ -9,7 +9,6 @@ if(EMSCRIPTEN)
   target_link_options(idbvfs
     PUBLIC
       -lidbfs.js
-      -sASYNCIFY=1
   )
 endif()
 if(IDBVFS_TRACE)
