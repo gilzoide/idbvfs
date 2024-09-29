@@ -1,5 +1,3 @@
-#include <cstdlib>
-
 #include <emscripten.h>
 
 #include <idbvfs.h>
