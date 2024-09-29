@@ -15,10 +15,6 @@
 	#define DISK_SECTOR_SIZE 32
 #endif
 
-/// Return the minimum value between `a` and `b`
-#define MIN(a, b) \
-	((a) < (b) ? (a) : (b))
-
 /// Indexed DB key used to store idbvfs file sizes
 #define IDBVFS_SIZE_KEY "file_size"
 
