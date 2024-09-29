@@ -59,6 +59,16 @@
         timeBefore = Date.now()
         Module.ccall('run_sql', null, ['string', 'string'], ["idbvfs-demo", sqlinput.value])
       }
+
+      function init() {
+        if (Module.calledRun) {
+          Module.ccall('idbvfs_register', ['number'], [1])
+        }
+        else {
+          requestIdleCallback(init)
+        }
+      }
+      init()
     </script>
   </body>
 </html>
