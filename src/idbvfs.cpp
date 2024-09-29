@@ -1,3 +1,4 @@
+#include <cstdarg>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -67,7 +68,7 @@ public:
 	}
 
 	bool exists() const {
-		if (FILE *f = fopen(filename.c_str(), "rb")) {
+		if (FILE *f = fopen(filename.c_str(), "r")) {
 			fclose(f);
 			return true;
 		}
@@ -77,7 +78,7 @@ public:
 	}
 
 	int load_into(void *data, size_t data_size, sqlite3_int64 offset_in_page = 0) const {
-		if (FILE *f = fopen(filename.c_str(), "rb")) {
+		if (FILE *f = fopen(filename.c_str(), "r")) {
 			if (offset_in_page > 0) {
 				fseek(f, offset_in_page, SEEK_SET);
 			}
@@ -95,10 +96,24 @@ public:
 		return load_into(out_buffer.data(), data_size);
 	}
 
+	int scan_into(const char *fmt, ...) const {
+		if (FILE *f = fopen(filename.c_str(), "r")) {
+			va_list args;
+			va_start(args, fmt);
+			int assigned_items = vfscanf(f, fmt, args);
+			va_end(args);
+			fclose(f);
+			return assigned_items;
+		}
+		else {
+			return 0;
+		}
+	}
+
 	int store(const void *data, size_t data_size) const {
 		mkdir(dbname, 0777);
 
-		if (FILE *f = fopen(filename.c_str(), "wb")) {
+		if (FILE *f = fopen(filename.c_str(), "w")) {
 			size_t written_bytes = fwrite(data, 1, data_size, f);
 			fclose(f);
 			return written_bytes;
@@ -110,6 +125,10 @@ public:
 
 	int store(const std::vector<uint8_t>& data) const {
 		return store(data.data(), data.size());
+	}
+
+	int store(const std::string& data) const {
+		return store(data.c_str(), data.size());
 	}
 
 	bool remove() const {
@@ -130,12 +149,8 @@ struct IdbFileSize : public IdbPage {
 	}
 
 	void load() {
-		char size_buffer[16];
-		int loaded_bytes = load_into(size_buffer, sizeof(size_buffer));
-		if (loaded_bytes > 0 && loaded_bytes < sizeof(size_buffer)) {
-			sscanf(size_buffer, "%lu", &file_size);
-			is_dirty = false;
-		}
+		scan_into("%lu", &file_size);
+		is_dirty = false;
 	}
 
 	size_t get() const {
@@ -156,9 +171,12 @@ struct IdbFileSize : public IdbPage {
 	}
 
 	bool sync() const {
-		char buffer[16];
-		int written_size = snprintf(buffer, sizeof(buffer), "%lu", file_size);
-		return store(buffer, MIN(written_size, sizeof(buffer))) > 0;
+		if (is_dirty) {
+			return store(std::to_string(file_size)) > 0;
+		}
+		else {
+			return true;
+		}
 	}
 
 private:
