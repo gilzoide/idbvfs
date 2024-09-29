@@ -15,6 +15,7 @@
     <script src="demo.js"></script>
     <script>
       var isRunningSql = false
+      var timeBefore
       var sqlinput = document.getElementById("sqlinput")
       var sqloutput = document.getElementById("sqloutput")
       function onSQLColumnName(column_index, column_name) {
@@ -36,8 +37,17 @@
           sqloutput.innerText += " | " + column_value
         }
       }
-      function onSQLError(error) {
-        sqloutput.innerText = "ERROR: " + error
+      function onSQLComplete(error) {
+        if (error) {
+          sqloutput.innerText = "ERROR: " + error
+        }
+
+        var timeDiff = Date.now() - timeBefore
+        if (!sqloutput.innerText) {
+          sqloutput.innerText = "OK!"
+        }
+        sqloutput.innerHTML += "<br/><br/>Took: " + timeDiff + "ms"
+        isRunningSql = false
       }
       function runSQL() {
         if (isRunningSql) {
@@ -46,15 +56,8 @@
 
         isRunningSql = true
         sqloutput.innerText = ""
-        var timeBefore = Date.now()
-        Module.ccall('run_sql', null, ['string', 'string'], ["idbvfs-demo", sqlinput.value], { async: true }).then(() => {
-          var timeDiff = Date.now() - timeBefore
-          if (!sqloutput.innerText) {
-            sqloutput.innerText = "OK!"
-          }
-          sqloutput.innerHTML += "<br/><br/>Took: " + timeDiff + "ms"
-          isRunningSql = false
-        })
+        timeBefore = Date.now()
+        Module.ccall('run_sql', null, ['string', 'string'], ["idbvfs-demo", sqlinput.value])
       }
     </script>
   </body>

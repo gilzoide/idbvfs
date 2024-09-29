@@ -49,10 +49,8 @@ extern "C" void run_sql(const char *dbname, const char *sql) {
 	char *errmsg;
 	bool is_first = true;
 	sqlite3_exec(db, sql, sql_callback, &is_first, &errmsg);
-	if (errmsg) {
-		EM_ASM({
-			onSQLError(UTF8ToString($0))
-		}, errmsg);
-		sqlite3_free(errmsg);
-	}
+	EM_ASM({
+		onSQLComplete($0 ? UTF8ToString($0) : null)
+	}, errmsg);
+	sqlite3_free(errmsg);
 }
