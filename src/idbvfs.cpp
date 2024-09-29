@@ -417,7 +417,8 @@ extern "C" {
 	int idbvfs_register(int makeDefault) {
 		static SQLiteVfs<IdbVfs> idbvfs(IDBVFS_NAME);
 		INLINE_JS({
-			// Mount IDBFS to the default idbvfs file root
+			// Mount IDBFS to the "/idbvfs" directory
+			// which is used as the root path for all files
 			FS.mkdir("/idbvfs");
 			FS.mount(IDBFS, {}, "/idbvfs");
 			FS.syncfs(true, function(e) { if (e) console.error(e); });
