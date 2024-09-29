@@ -24,6 +24,9 @@
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
+#define INLINE_JS(...) EM_ASM(__VA_ARGS__)
+#else
+#define INLINE_JS(...)
 #endif
 
 
@@ -227,13 +230,9 @@ struct IdbFile : public SQLiteFileImpl {
 			file_size.set(journal_data.size());
 		}
 		bool success = file_size.sync();
-#ifdef __EMSCRIPTEN__
-		EM_ASM({
-			FS.syncfs(false, function(e) {
-				if (e) console.error(e);
-			});
+		INLINE_JS({
+			Module.idbvfsSyncfs();
 		});
-#endif
 		TRACE_LOG("  > %d", success);
 		return success ? SQLITE_OK : SQLITE_IOERR_FSYNC;
 	}
@@ -380,6 +379,16 @@ struct IdbVfs : public SQLiteVfsImpl<IdbFile> {
 		}
 		return SQLITE_NOTFOUND;
 	}
+
+	int xFullPathname(const char *zName, int nOut, char *zOut) override {
+		TRACE_LOG("FULL PATH %s", zName);
+		if (zName[0] == '/') {
+			zName++;
+		}
+		snprintf(zOut, nOut, "/idbvfs/%s", zName);
+		TRACE_LOG(" > %s", zOut);
+		return SQLITE_OK;
+	}
 };
 
 extern "C" {
@@ -387,6 +396,29 @@ extern "C" {
 
 	int idbvfs_register(int makeDefault) {
 		static SQLiteVfs<IdbVfs> idbvfs(IDBVFS_NAME);
+		INLINE_JS({
+			// Mount IDBFS to the default idbvfs file root
+			FS.mkdir("/idbvfs");
+			FS.mount(IDBFS, {}, "/idbvfs");
+			FS.syncfs(true, function(e) { if (e) console.error(e); });
+
+			// Run FS.syncfs in a queue, to avoid concurrent execution errors
+			var syncQueue = 0;
+			function doSync() {
+				FS.syncfs(false, function() {
+					syncQueue--;
+					if (syncQueue > 0) {
+						doSync();
+					}
+				});
+			}
+			Module.idbvfsSyncfs = function() {
+				syncQueue++;
+				if (syncQueue == 1) {
+					doSync();
+				}
+			};
+		});
 		return idbvfs.register_vfs(makeDefault);
 	}
 }
