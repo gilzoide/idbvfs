@@ -398,6 +398,7 @@ struct IdbVfs : public SQLiteVfsImpl<IdbFile> {
 		return SQLITE_NOTFOUND;
 	}
 
+#ifdef __EMSCRIPTEN__
 	int xFullPathname(const char *zName, int nOut, char *zOut) override {
 		TRACE_LOG("FULL PATH %s", zName);
 		if (zName[0] == '/') {
@@ -407,6 +408,7 @@ struct IdbVfs : public SQLiteVfsImpl<IdbFile> {
 		TRACE_LOG(" > %s", zOut);
 		return SQLITE_OK;
 	}
+#endif
 };
 
 extern "C" {
