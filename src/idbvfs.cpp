@@ -417,28 +417,30 @@ extern "C" {
 	int idbvfs_register(int makeDefault) {
 		static SQLiteVfs<IdbVfs> idbvfs(IDBVFS_NAME);
 		INLINE_JS({
-			// Mount IDBFS to the "/idbvfs" directory
-			// which is used as the root path for all files
-			FS.mkdir("/idbvfs");
-			FS.mount(IDBFS, {}, "/idbvfs");
-			FS.syncfs(true, function(e) { if (e) console.error(e); });
+			if (!Module.idbvfsSyncfs) {
+				// Mount IDBFS to the "/idbvfs" directory
+				// which is used as the root path for all files
+				FS.mkdir("/idbvfs");
+				FS.mount(IDBFS, {}, "/idbvfs");
+				FS.syncfs(true, function(e) { if (e) console.error(e); });
 
-			// Run FS.syncfs in a queue, to avoid concurrent execution errors
-			var syncQueue = 0;
-			function doSync() {
-				FS.syncfs(false, function() {
-					syncQueue--;
-					if (syncQueue > 0) {
+				// Run FS.syncfs in a queue, to avoid concurrent execution errors
+				var syncQueue = 0;
+				function doSync() {
+					FS.syncfs(false, function() {
+						syncQueue--;
+						if (syncQueue > 0) {
+							doSync();
+						}
+					});
+				}
+				Module.idbvfsSyncfs = function() {
+					syncQueue++;
+					if (syncQueue == 1) {
 						doSync();
 					}
-				});
+				};
 			}
-			Module.idbvfsSyncfs = function() {
-				syncQueue++;
-				if (syncQueue == 1) {
-					doSync();
-				}
-			};
 		});
 		return idbvfs.register_vfs(makeDefault);
 	}
