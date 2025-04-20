@@ -1,6 +1,8 @@
-/** @file idbvfs.h
+/** @file idbvfs.hpp
  *
- * SQLite VFS that stores data in web browser's Indexed DB using Emscripten.
+ * C++ helper templates for idbvfs
+ *
+ * @see idbvfs.h
  */
 /*
  * This is free and unencumbered software released into the public domain.
@@ -28,35 +30,43 @@
  *
  * For more information, please refer to <http://unlicense.org/>
  */
-#ifdef __cplusplus
-extern "C" {
+#include "idbvfs.h"
+
+#include <functional>
+#include <memory>
+
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
 #endif
 
-/**
- * String containing idbvfs name.
- */
-extern const char *IDBVFS_NAME;
+namespace idbvfs {
+
+namespace detail {
+
+template<typename Fn>
+void invoke_bound_callback_after_idbvfs_mounted(void *userdata) {
+	if (idbvfs_is_mounted()) {
+		std::unique_ptr<Fn> callback(static_cast<Fn *>(userdata));
+		(*callback)();
+	}
+#ifdef __EMSCRIPTEN__
+	else {
+		emscripten_async_call(invoke_bound_callback_after_idbvfs_mounted<Fn>, userdata, 0);
+	}
+#endif
+}
+
+}
 
 /**
- * Registers idbvfs in SQLite 3.
- *
- * @param makeDefault  Whether idbvfs will be the new default VFS.
- * @return Return value from `sqlite3_vfs_register`
- * @see https://sqlite.org/c3ref/vfs_find.html
- */
-int idbvfs_register(int makeDefault);
-
-/**
- * Check whether the folder where idbvfs stores databases has been mounted.
- */
-int idbvfs_is_mounted();
-
-/**
- * Execute a callback after the folder where idbvfs stores databases has been mounted.
+ * Execute a callback with the given arguments after the folder where idbvfs stores databases has been mounted.
  * In Emscripten, this will be invoked using `emscripten_async_call` when `idbvfs_is_mounted` returns true.
  */
-void idbvfs_async_call_after_mounted(void (*callback)(void *userdata), void *userdata);
-
-#ifdef __cplusplus
+template<typename Fn, typename... Args>
+void async_call_after_mounted(Fn&& fn, Args&&... args) {
+	auto callback = std::bind(fn, std::forward<Args>(args)...);
+	auto callback_ptr = new decltype(callback)(std::move(callback));
+	detail::invoke_bound_callback_after_idbvfs_mounted<decltype(callback)>(callback_ptr);
 }
-#endif
+
+}

@@ -34,7 +34,7 @@
 
 #include <SQLiteVfs.hpp>
 
-#include "idbvfs.h"
+#include "idbvfs.hpp"
 
 /// Used size for Indexed DB "disk sectors"
 #ifndef DISK_SECTOR_SIZE
@@ -480,5 +480,9 @@ extern "C" {
 		return INLINE_JS_INT(1, {
 			return Module.isIdbvfsMounted || 0;
 		});
+	}
+
+	void idbvfs_async_call_after_mounted(void (*callback)(void *userdata), void *userdata) {
+		idbvfs::async_call_after_mounted(callback, userdata);
 	}
 }
