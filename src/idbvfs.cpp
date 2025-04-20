@@ -48,8 +48,10 @@
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
 #define INLINE_JS(...) EM_ASM(__VA_ARGS__)
+#define INLINE_JS_INT(unused_value, ...) EM_ASM_INT(__VA_ARGS__)
 #else
 #define INLINE_JS(...)
+#define INLINE_JS_INT(fallback_value, ...) fallback_value
 #endif
 
 
@@ -444,7 +446,14 @@ extern "C" {
 				// which is used as the root path for all files
 				FS.mkdir("/idbvfs");
 				FS.mount(IDBFS, {}, "/idbvfs");
-				FS.syncfs(true, function(e) { if (e) console.error(e); });
+				FS.syncfs(true, function(e) {
+					if (e) {
+						console.error(e);
+					}
+					else {
+						Module.isIdbvfsMounted = true;
+					}
+				});
 
 				// Run FS.syncfs in a queue, to avoid concurrent execution errors
 				var syncQueue = 0;
@@ -465,5 +474,11 @@ extern "C" {
 			}
 		});
 		return idbvfs.register_vfs(makeDefault);
+	}
+
+	int idbvfs_is_mounted() {
+		return INLINE_JS_INT(1, {
+			return Module.isIdbvfsMounted || 0;
+		});
 	}
 }

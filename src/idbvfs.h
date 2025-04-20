@@ -46,6 +46,11 @@ extern const char *IDBVFS_NAME;
  */
 int idbvfs_register(int makeDefault);
 
+/**
+ * Check whether the folder where idbvfs stores databases has been mounted.
+ */
+int idbvfs_is_mounted();
+
 #ifdef __cplusplus
 }
 #endif
