@@ -1,17 +1,11 @@
-cmake_minimum_required(VERSION 3.1)
-
-if(DEFINED PROJECT_NAME)
-  set(IS_SUBPROJECT ON)
-else()
-  set(IS_SUBPROJECT OFF)
-endif()
+cmake_minimum_required(VERSION 3.21...4.1)
 
 project(idbvfs LANGUAGES C CXX)
 
 # Options
 include(CMakeDependentOption)
-cmake_dependent_option(IDBVFS_BUILD_TESTS "Builds unit tests" ON "NOT EMSCRIPTEN;NOT IS_SUBPROJECT" OFF)
-cmake_dependent_option(IDBVFS_BUILD_DEMO "Builds demo WASM file" OFF "EMSCRIPTEN;NOT IS_SUBPROJECT" OFF)
+cmake_dependent_option(IDBVFS_BUILD_TESTS "Builds unit tests" ON "NOT EMSCRIPTEN;PROJECT_IS_TOP_LEVEL" OFF)
+cmake_dependent_option(IDBVFS_BUILD_DEMO "Builds demo WASM file" OFF "EMSCRIPTEN;PROJECT_IS_TOP_LEVEL" OFF)
 option(IDBVFS_TRACE "Logs trace messages on I/O operations" OFF)
 
 # idbvfs library
