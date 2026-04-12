@@ -30,6 +30,8 @@
  *
  * For more information, please refer to <http://unlicense.org/>
  */
+#pragma once
+
 #include "idbvfs.h"
 
 #include <functional>
