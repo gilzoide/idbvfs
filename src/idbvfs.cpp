@@ -495,9 +495,11 @@ struct IdbVfs : public SQLiteVfsImpl<IdbFile> {
 	int xFullPathname(const char *zName, int nOut, char *zOut) override {
 		TRACE_LOG("FULL PATH %s", zName);
 		if (zName[0] == '/') {
-			zName++;
+			strncpy(zOut, zName, nOut);
 		}
-		snprintf(zOut, nOut, "/idbvfs/%s", zName);
+		else {
+			snprintf(zOut, nOut, "/idbvfs/%s", zName);
+		}
 		TRACE_LOG(" > %s", zOut);
 		return SQLITE_OK;
 	}
