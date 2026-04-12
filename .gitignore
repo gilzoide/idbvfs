@@ -1,3 +1,4 @@
 build*/
 .cache/
+test_file.sqlite*
 test.sqlite*/
